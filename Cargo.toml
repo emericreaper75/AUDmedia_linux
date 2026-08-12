@@ -1,0 +1,12 @@
+[package]
+name = "audmedia_linux"
+version = "0.1.0"
+edition = "2021"
+authors = ["AUDmedia Team"]
+description = "Lightweight Linux mobile-style music player"
+license = "MIT"
+
+[dependencies]
+gtk4 = "0.9"
+libadwaita = "0.7"
+gstreamer = "0.23"
