@@ -23,7 +23,13 @@ fn main() -> glib::ExitCode {
     // Initialize GTK4 / libadwaita application
     let app = adw::Application::builder().application_id(APP_ID).build();
 
-    app.connect_activate(ui::window::build_ui);
+    let state = std::rc::Rc::new(std::cell::RefCell::new(
+        app::AppState::new().expect("Failed to initialize application state"),
+    ));
+
+    app.connect_activate(move |app| {
+        ui::window::build_ui(app, state.clone());
+    });
 
     app.run()
 }

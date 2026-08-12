@@ -1,11 +1,13 @@
 //! Main application state manager.
 
+#![allow(dead_code)]
+
 use crate::library::Library;
 use crate::player::Player;
 use crate::queue::Queue;
 
 /// Application state linking UI, Library, Player, and Queue.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct AppState {
     pub library: Library,
     pub player: Player,
@@ -14,7 +16,11 @@ pub struct AppState {
 
 impl AppState {
     /// Creates a new `AppState`.
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new() -> Result<Self, String> {
+        Ok(Self {
+            library: Library,
+            player: Player::new().map_err(|e| e.to_string())?,
+            queue: Queue,
+        })
     }
 }
