@@ -8,6 +8,7 @@ use gstreamer::prelude::*;
 #[derive(Debug)]
 pub struct Player {
     pipeline: gst::Element,
+    _bus_watch: gst::bus::BusWatchGuard,
 }
 
 impl Player {
@@ -17,7 +18,26 @@ impl Player {
             .build()
             .map_err(|e| glib::Error::new(glib::FileError::Failed, &e.to_string()))?;
 
-        Ok(Self { pipeline })
+        let bus = pipeline.bus().expect("Pipeline should have a bus");
+        let bus_watch = bus
+            .add_watch(move |_, msg| {
+                match msg.view() {
+                    gst::MessageView::Eos(..) => {
+                        println!("End of stream reached. (Queue support to be added)");
+                    }
+                    gst::MessageView::Error(err) => {
+                        eprintln!("Playback error: {} ({:?})", err.error(), err.debug());
+                    }
+                    _ => (),
+                }
+                glib::ControlFlow::Continue
+            })
+            .expect("Failed to add bus watch");
+
+        Ok(Self {
+            pipeline,
+            _bus_watch: bus_watch,
+        })
     }
 
     /// Plays a file from the given URI.
@@ -49,12 +69,32 @@ impl Player {
 
     /// Returns whether the player is currently playing.
     pub fn is_playing(&self) -> bool {
-        let (result, state, _pending) = self.pipeline.state(gst::ClockTime::NONE);
+        let (result, state, _pending) = self.pipeline.state(gst::ClockTime::ZERO);
         if result.is_ok() {
             state == gst::State::Playing
         } else {
             false
         }
+    }
+
+    /// Gets the current playback position in nanoseconds.
+    pub fn position(&self) -> Option<u64> {
+        self.pipeline.query_position::<gst::ClockTime>().map(|t| t.nseconds())
+    }
+
+    /// Gets the duration of the current file in nanoseconds.
+    pub fn duration(&self) -> Option<u64> {
+        self.pipeline.query_duration::<gst::ClockTime>().map(|t| t.nseconds())
+    }
+
+    /// Seeks to a specific position in nanoseconds.
+    pub fn seek(&self, position_ns: u64) -> Result<(), glib::Error> {
+        let flags = gst::SeekFlags::FLUSH | gst::SeekFlags::KEY_UNIT;
+        let pos = gst::ClockTime::from_nseconds(position_ns);
+        if self.pipeline.seek_simple(flags, pos).is_err() {
+            return Err(glib::Error::new(glib::FileError::Failed, "Seek failed"));
+        }
+        Ok(())
     }
 }
 
@@ -74,11 +114,11 @@ mod tests {
         gst::init().unwrap();
         let player = Player::new().unwrap();
         assert!(!player.is_playing());
-        
+
         // Cannot play without valid URI but we can test stop/pause methods don't panic
         player.pause();
         assert!(!player.is_playing());
-        
+
         player.stop();
         assert!(!player.is_playing());
     }
