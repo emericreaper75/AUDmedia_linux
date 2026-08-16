@@ -313,31 +313,6 @@ linux-music-player/
 └── .gitignore
 ```
 
-## AI-assisted development
-
-This project uses AI coding agents during development.
-
-`AGENTS.md` defines the rules agents should follow.
-
-Agents should:
-
-* Read project documentation before making significant changes.
-* Keep changes small.
-* Follow the documented architecture.
-* Avoid unapproved features.
-* Avoid unnecessary dependencies.
-* Run relevant tests and checks.
-* Report actual validation results.
-* Never commit secrets.
-
-The main project documents are:
-
-```text id="x8w8sv"
-PRD.md
-design.md
-architecture.md
-AGENTS.md
-```
 
 ## Testing
 
