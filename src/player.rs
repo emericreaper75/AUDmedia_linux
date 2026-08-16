@@ -3,12 +3,20 @@
 use gstreamer as gst;
 use gstreamer::glib;
 use gstreamer::prelude::*;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 /// Audio player managing playback state and GStreamer pipeline.
-#[derive(Debug)]
+#[derive(Clone)]
 pub struct Player {
     pipeline: gst::Element,
-    _bus_watch: gst::bus::BusWatchGuard,
+    on_eos: Rc<RefCell<Option<Box<dyn FnMut()>>>>,
+}
+
+impl std::fmt::Debug for Player {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Player").finish()
+    }
 }
 
 impl Player {
@@ -19,11 +27,17 @@ impl Player {
             .map_err(|e| glib::Error::new(glib::FileError::Failed, &e.to_string()))?;
 
         let bus = pipeline.bus().expect("Pipeline should have a bus");
-        let bus_watch = bus
-            .add_watch(move |_, msg| {
+
+        let on_eos = Rc::new(RefCell::new(None::<Box<dyn FnMut()>>));
+        let on_eos_clone = on_eos.clone();
+
+        let _bus_watch = bus
+            .add_watch_local(move |_, msg| {
                 match msg.view() {
                     gst::MessageView::Eos(..) => {
-                        println!("End of stream reached. (Queue support to be added)");
+                        if let Some(cb) = on_eos_clone.borrow_mut().as_mut() {
+                            cb();
+                        }
                     }
                     gst::MessageView::Error(err) => {
                         eprintln!("Playback error: {} ({:?})", err.error(), err.debug());
@@ -34,10 +48,12 @@ impl Player {
             })
             .expect("Failed to add bus watch");
 
-        Ok(Self {
-            pipeline,
-            _bus_watch: bus_watch,
-        })
+        Ok(Self { pipeline, on_eos })
+    }
+
+    /// Sets the callback to be executed when the player reaches the end of the stream.
+    pub fn set_eos_callback<F: FnMut() + 'static>(&self, f: F) {
+        *self.on_eos.borrow_mut() = Some(Box::new(f));
     }
 
     /// Plays a file from the given URI.
@@ -79,12 +95,16 @@ impl Player {
 
     /// Gets the current playback position in nanoseconds.
     pub fn position(&self) -> Option<u64> {
-        self.pipeline.query_position::<gst::ClockTime>().map(|t| t.nseconds())
+        self.pipeline
+            .query_position::<gst::ClockTime>()
+            .map(|t| t.nseconds())
     }
 
     /// Gets the duration of the current file in nanoseconds.
     pub fn duration(&self) -> Option<u64> {
-        self.pipeline.query_duration::<gst::ClockTime>().map(|t| t.nseconds())
+        self.pipeline
+            .query_duration::<gst::ClockTime>()
+            .map(|t| t.nseconds())
     }
 
     /// Seeks to a specific position in nanoseconds.

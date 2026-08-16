@@ -10,6 +10,7 @@ pub struct PlayerControls {
     pub lbl_artist: Label,
     pub scale_progress: Scale,
     pub lbl_time: Label,
+    pub img_artwork: gtk4::Image,
 }
 
 impl PlayerControls {
@@ -76,6 +77,21 @@ impl PlayerControls {
         info_box.append(&lbl_title);
         info_box.append(&lbl_artist);
 
+        let img_artwork = gtk4::Image::builder()
+            .icon_name("audio-x-generic-symbolic")
+            .pixel_size(48)
+            .build();
+
+        let left_box = GtkBox::builder()
+            .orientation(Orientation::Horizontal)
+            .spacing(12)
+            .hexpand(true)
+            .valign(Align::Center)
+            .build();
+
+        left_box.append(&img_artwork);
+        left_box.append(&info_box);
+
         // Buttons
         let btn_box = GtkBox::builder()
             .orientation(Orientation::Horizontal)
@@ -104,11 +120,9 @@ impl PlayerControls {
         btn_box.append(&btn_next);
 
         // Right spacer to keep buttons centered
-        let right_spacer = GtkBox::builder()
-            .hexpand(true)
-            .build();
+        let right_spacer = GtkBox::builder().hexpand(true).build();
 
-        controls_box.append(&info_box);
+        controls_box.append(&left_box);
         controls_box.append(&btn_box);
         controls_box.append(&right_spacer);
 
@@ -124,6 +138,7 @@ impl PlayerControls {
             lbl_artist,
             scale_progress,
             lbl_time,
+            img_artwork,
         }
     }
 }

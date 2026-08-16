@@ -46,6 +46,7 @@ mod item_imp {
     pub struct ItemObject {
         pub title: RefCell<String>,
         pub subtitle: RefCell<String>,
+        pub artwork_path: RefCell<Option<String>>,
     }
 
     #[glib::object_subclass]
@@ -63,10 +64,11 @@ glib::wrapper! {
 }
 
 impl ItemObject {
-    pub fn new(title: &str, subtitle: &str) -> Self {
+    pub fn new(title: &str, subtitle: &str, artwork_path: Option<String>) -> Self {
         let obj: Self = glib::Object::builder().build();
         obj.imp().title.replace(title.to_string());
         obj.imp().subtitle.replace(subtitle.to_string());
+        obj.imp().artwork_path.replace(artwork_path);
         obj
     }
 
@@ -76,5 +78,9 @@ impl ItemObject {
 
     pub fn subtitle(&self) -> String {
         self.imp().subtitle.borrow().clone()
+    }
+
+    pub fn artwork_path(&self) -> Option<String> {
+        self.imp().artwork_path.borrow().clone()
     }
 }

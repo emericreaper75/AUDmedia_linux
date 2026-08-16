@@ -1,8 +1,10 @@
 //! Audio metadata extraction and artwork discovery.
 
+use image::imageops::FilterType;
 use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::probe::Probe;
 use lofty::tag::Accessor;
+use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::time::Duration;
 
@@ -18,9 +20,13 @@ pub struct TrackMetadata {
     pub genre: Option<String>,
     pub year: Option<u32>,
     pub duration: Option<Duration>,
+    pub artwork_path: Option<String>,
 }
 
-pub fn extract_metadata(path: &Path) -> Result<TrackMetadata, Box<dyn std::error::Error>> {
+pub fn extract_metadata(
+    path: &Path,
+    cache_dir: &Path,
+) -> Result<TrackMetadata, Box<dyn std::error::Error>> {
     let tagged_file = Probe::open(path)?.guess_file_type()?.read()?;
 
     let tag = tagged_file
@@ -39,9 +45,67 @@ pub fn extract_metadata(path: &Path) -> Result<TrackMetadata, Box<dyn std::error
         meta.track_number = t.track();
         meta.disc_number = t.disk();
         meta.genre = t.genre().map(|s| s.into_owned());
-        // Try to get year if available in Accessor, otherwise ignore for now
-        // Some formats don't have a direct year() method without fetching an Item
+
+        meta.artwork_path = extract_and_cache_artwork(Some(t), path, cache_dir);
+    } else {
+        meta.artwork_path = extract_and_cache_artwork(None, path, cache_dir);
     }
 
     Ok(meta)
+}
+
+fn extract_and_cache_artwork(
+    tag: Option<&lofty::tag::Tag>,
+    path: &Path,
+    cache_dir: &Path,
+) -> Option<String> {
+    // Generate a hash based on the directory path to deduplicate caching
+    // since tracks in the same directory usually share the same artwork.
+    let parent_dir = path.parent()?.to_string_lossy();
+    let mut hasher = Sha256::new();
+    hasher.update(parent_dir.as_bytes());
+    let hash_bytes = hasher.finalize();
+    let hash_str = hash_bytes
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<String>();
+
+    let cached_file_path = cache_dir.join(format!("{}.jpg", hash_str));
+
+    if cached_file_path.exists() {
+        return Some(cached_file_path.to_string_lossy().into_owned());
+    }
+
+    // Ensure cache dir exists
+    if !cache_dir.exists() {
+        let _ = std::fs::create_dir_all(cache_dir);
+    }
+
+    // Attempt 1: Embedded artwork
+    if let Some(t) = tag {
+        if let Some(pic) = t.pictures().first() {
+            if let Ok(img) = image::load_from_memory(pic.data()) {
+                let resized = img.resize_to_fill(256, 256, FilterType::Lanczos3);
+                if resized.save(&cached_file_path).is_ok() {
+                    return Some(cached_file_path.to_string_lossy().into_owned());
+                }
+            }
+        }
+    }
+
+    // Attempt 2: Local artwork
+    let local_names = ["cover.jpg", "cover.png", "folder.jpg", "folder.png"];
+    for name in local_names {
+        let local_path = path.parent()?.join(name);
+        if local_path.exists() {
+            if let Ok(img) = image::open(&local_path) {
+                let resized = img.resize_to_fill(256, 256, FilterType::Lanczos3);
+                if resized.save(&cached_file_path).is_ok() {
+                    return Some(cached_file_path.to_string_lossy().into_owned());
+                }
+            }
+        }
+    }
+
+    None
 }

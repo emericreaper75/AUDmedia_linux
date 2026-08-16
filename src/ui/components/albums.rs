@@ -60,17 +60,18 @@ impl AlbumsView {
 
             let vbox = list_item.child().and_downcast::<GtkBox>().unwrap();
 
-            let title_label = vbox
-                .first_child()
-                .unwrap()
-                .next_sibling()
-                .unwrap()
-                .downcast::<Label>()
-                .unwrap();
+            let icon = vbox.first_child().unwrap().downcast::<Image>().unwrap();
+            let title_label = icon.next_sibling().unwrap().downcast::<Label>().unwrap();
             let subtitle_label = vbox.last_child().unwrap().downcast::<Label>().unwrap();
 
             title_label.set_label(&item_obj.title());
             subtitle_label.set_label(&item_obj.subtitle());
+
+            if let Some(ref path) = item_obj.artwork_path() {
+                icon.set_from_file(Some(path));
+            } else {
+                icon.set_icon_name(Some("media-optical-symbolic"));
+            }
         });
 
         let grid_view = GridView::new(Some(selection_model), Some(factory));

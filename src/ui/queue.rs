@@ -1,22 +1,22 @@
 use crate::ui::models::TrackObject;
 use gtk4::prelude::*;
 use gtk4::{
-    gio, glib, Box as GtkBox, BuilderListItemFactory, Image, Label, ListView, Orientation,
-    SingleSelection,
+    gio, Box as GtkBox, Image, Label, ListView, Orientation, SignalListItemFactory, SingleSelection,
 };
 
-pub struct SongsView {
+pub struct QueueView {
     pub container: gtk4::ScrolledWindow,
     pub store: gio::ListStore,
     pub selection_model: SingleSelection,
+    pub list_view: ListView,
 }
 
-impl SongsView {
+impl QueueView {
     pub fn new() -> Self {
         let store = gio::ListStore::new::<TrackObject>();
         let selection_model = SingleSelection::new(Some(store.clone()));
 
-        let factory = gtk4::SignalListItemFactory::new();
+        let factory = SignalListItemFactory::new();
 
         factory.connect_setup(move |_, list_item| {
             let list_item = list_item.downcast_ref::<gtk4::ListItem>().unwrap();
@@ -86,17 +86,10 @@ impl SongsView {
 
             title_label.set_label(&title);
             artist_label.set_label(&artist);
-
-            let icon = hbox.first_child().and_downcast::<Image>().unwrap();
-            if let Some(ref path) = track.metadata.artwork_path {
-                icon.set_from_file(Some(path));
-            } else {
-                icon.set_icon_name(Some("audio-x-generic-symbolic"));
-            }
         });
 
         let list_view = ListView::new(Some(selection_model.clone()), Some(factory));
-        list_view.add_css_class("navigation-sidebar"); // Gives it a nice list look
+        list_view.add_css_class("navigation-sidebar");
 
         let scrolled_window = gtk4::ScrolledWindow::builder()
             .child(&list_view)
@@ -107,6 +100,7 @@ impl SongsView {
             container: scrolled_window,
             store,
             selection_model,
+            list_view,
         }
     }
 }

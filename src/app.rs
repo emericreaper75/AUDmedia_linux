@@ -12,7 +12,6 @@ pub struct AppState {
     pub library: Library,
     pub player: Player,
     pub queue: Queue,
-    pub current_track_index: Option<usize>,
 }
 
 impl AppState {
@@ -21,8 +20,7 @@ impl AppState {
         Ok(Self {
             library: Library::new(),
             player: Player::new().map_err(|e| e.to_string())?,
-            queue: Queue,
-            current_track_index: None,
+            queue: Queue::new(),
         })
     }
 }

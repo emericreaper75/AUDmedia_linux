@@ -1,8 +1,9 @@
 use crate::app::AppState;
+use crate::ui::components::player_controls::PlayerControls;
 use crate::ui::home::HomeView;
 use crate::ui::library::LibraryView;
 use crate::ui::models::{ItemObject, TrackObject};
-use crate::ui::components::player_controls::PlayerControls;
+use crate::ui::queue::QueueView;
 use adw::prelude::*;
 use adw::{HeaderBar, ViewStack, ViewSwitcherBar};
 use gtk4::glib;
@@ -22,6 +23,7 @@ pub fn build_ui(app: &adw::Application, state: Rc<RefCell<AppState>>) {
     let stack = ViewStack::new();
     let home_view_rc = Rc::new(HomeView::new());
     let library_view_rc = Rc::new(LibraryView::new());
+    let queue_view_rc = Rc::new(QueueView::new());
 
     let home_page = stack.add_titled(&home_view_rc.container, Some("home"), "Home");
     home_page.set_icon_name(Some("go-home-symbolic"));
@@ -29,13 +31,16 @@ pub fn build_ui(app: &adw::Application, state: Rc<RefCell<AppState>>) {
     let library_page = stack.add_titled(&library_view_rc.container, Some("library"), "Library");
     library_page.set_icon_name(Some("folder-music-symbolic"));
 
+    let queue_page = stack.add_titled(&queue_view_rc.container, Some("queue"), "Queue");
+    queue_page.set_icon_name(Some("view-list-symbolic"));
+
     toolbar_view.append(&stack);
 
     let switcher_bar = ViewSwitcherBar::builder()
         .stack(&stack)
         .reveal(true)
         .build();
-    
+
     let player_controls = Rc::new(PlayerControls::new());
     toolbar_view.append(&player_controls.container);
 
@@ -49,34 +54,108 @@ pub fn build_ui(app: &adw::Application, state: Rc<RefCell<AppState>>) {
         .content(&toolbar_view)
         .build();
 
-    
     // Player Controls Wiring
     let controls_rc = player_controls.clone();
-    
+
+    let controls_for_eos = controls_rc.clone();
+    let state_for_eos = state.clone();
+    let queue_view_for_eos = queue_view_rc.clone();
+
+    state.borrow().player.set_eos_callback(move || {
+        let mut app_state = state_for_eos.borrow_mut();
+        if let Some(track) = app_state.queue.next().cloned() {
+            let uri = glib::filename_to_uri(&track.path, None).unwrap();
+            let title = track
+                .metadata
+                .title
+                .clone()
+                .unwrap_or_else(|| "Unknown".to_string());
+            let artist = track
+                .metadata
+                .artist
+                .clone()
+                .unwrap_or_else(|| "Unknown Artist".to_string());
+
+            if let Err(e) = app_state.player.play_file(uri.as_str()) {
+                eprintln!("Auto-continue failed: {}", e);
+            } else {
+                controls_for_eos.lbl_title.set_label(&title);
+                controls_for_eos.lbl_artist.set_label(&artist);
+
+                if let Some(ref path) = track.metadata.artwork_path {
+                    controls_for_eos.img_artwork.set_from_file(Some(path));
+                } else {
+                    controls_for_eos
+                        .img_artwork
+                        .set_icon_name(Some("audio-x-generic-symbolic"));
+                }
+
+                if let Some(idx) = app_state.queue.current_index() {
+                    queue_view_for_eos
+                        .selection_model
+                        .select_item(idx as u32, true);
+                }
+            }
+        } else {
+            controls_for_eos
+                .btn_play_pause
+                .set_icon_name("media-playback-start-symbolic");
+        }
+    });
+
     // Selection changed -> Play song
     let state_for_selection = state.clone();
     let controls_for_selection = controls_rc.clone();
-    library_view_rc.songs_view.selection_model.connect_selection_changed(move |model, _, _| {
-        if let Some(item) = model.selected_item() {
-            if let Ok(track_obj) = item.downcast::<TrackObject>() {
-                let track = track_obj.get_track();
-                let idx = model.selected();
-                
-                let uri = glib::filename_to_uri(&track.path, None).unwrap();
-                
-                let mut app_state = state_for_selection.borrow_mut();
-                app_state.current_track_index = Some(idx as usize);
-                
-                if let Err(e) = app_state.player.play_file(uri.as_str()) {
-                    eprintln!("Failed to play: {}", e);
-                } else {
-                    controls_for_selection.lbl_title.set_label(track.metadata.title.as_deref().unwrap_or("Unknown"));
-                    controls_for_selection.lbl_artist.set_label(track.metadata.artist.as_deref().unwrap_or("Unknown Artist"));
-                    controls_for_selection.btn_play_pause.set_icon_name("media-playback-pause-symbolic");
+    let queue_view_for_selection = queue_view_rc.clone();
+    library_view_rc
+        .songs_view
+        .selection_model
+        .connect_selection_changed(move |model, _, _| {
+            if let Some(item) = model.selected_item() {
+                if let Ok(track_obj) = item.downcast::<TrackObject>() {
+                    let track = track_obj.get_track();
+
+                    let mut app_state = state_for_selection.borrow_mut();
+
+                    app_state.queue.clear();
+                    queue_view_for_selection.store.remove_all();
+
+                    app_state.queue.add_track(track.clone());
+                    queue_view_for_selection
+                        .store
+                        .append(&TrackObject::new(track.clone()));
+
+                    queue_view_for_selection
+                        .selection_model
+                        .select_item(0, true);
+
+                    let uri = glib::filename_to_uri(&track.path, None).unwrap();
+
+                    if let Err(e) = app_state.player.play_file(uri.as_str()) {
+                        eprintln!("Failed to play: {}", e);
+                    } else {
+                        controls_for_selection
+                            .lbl_title
+                            .set_label(track.metadata.title.as_deref().unwrap_or("Unknown"));
+                        controls_for_selection.lbl_artist.set_label(
+                            track.metadata.artist.as_deref().unwrap_or("Unknown Artist"),
+                        );
+
+                        if let Some(ref path) = track.metadata.artwork_path {
+                            controls_for_selection.img_artwork.set_from_file(Some(path));
+                        } else {
+                            controls_for_selection
+                                .img_artwork
+                                .set_icon_name(Some("audio-x-generic-symbolic"));
+                        }
+
+                        controls_for_selection
+                            .btn_play_pause
+                            .set_icon_name("media-playback-pause-symbolic");
+                    }
                 }
             }
-        }
-    });
+        });
 
     // Play/Pause button
     let state_for_play = state.clone();
@@ -87,7 +166,7 @@ pub fn build_ui(app: &adw::Application, state: Rc<RefCell<AppState>>) {
             app_state.player.pause();
             btn.set_icon_name("media-playback-start-symbolic");
         } else {
-            if app_state.current_track_index.is_some() {
+            if app_state.queue.current().is_some() {
                 app_state.player.resume();
                 btn.set_icon_name("media-playback-pause-symbolic");
             }
@@ -96,27 +175,92 @@ pub fn build_ui(app: &adw::Application, state: Rc<RefCell<AppState>>) {
 
     // Previous button
     let state_for_prev = state.clone();
-    let lib_view_for_prev = library_view_rc.clone();
+    let controls_for_prev = controls_rc.clone();
+    let queue_view_for_prev = queue_view_rc.clone();
     controls_rc.btn_prev.connect_clicked(move |_| {
-        let app_state = state_for_prev.borrow();
-        if let Some(mut idx) = app_state.current_track_index {
-            if idx > 0 {
-                idx -= 1;
-                lib_view_for_prev.songs_view.selection_model.select_item(idx as u32, true);
+        let mut app_state = state_for_prev.borrow_mut();
+        if let Some(track) = app_state.queue.previous().cloned() {
+            let uri = glib::filename_to_uri(&track.path, None).unwrap();
+            let title = track
+                .metadata
+                .title
+                .clone()
+                .unwrap_or_else(|| "Unknown".to_string());
+            let artist = track
+                .metadata
+                .artist
+                .clone()
+                .unwrap_or_else(|| "Unknown Artist".to_string());
+
+            if let Err(e) = app_state.player.play_file(uri.as_str()) {
+                eprintln!("Failed to play: {}", e);
+            } else {
+                controls_for_prev.lbl_title.set_label(&title);
+                controls_for_prev.lbl_artist.set_label(&artist);
+
+                if let Some(ref path) = track.metadata.artwork_path {
+                    controls_for_prev.img_artwork.set_from_file(Some(path));
+                } else {
+                    controls_for_prev
+                        .img_artwork
+                        .set_icon_name(Some("audio-x-generic-symbolic"));
+                }
+
+                controls_for_prev
+                    .btn_play_pause
+                    .set_icon_name("media-playback-pause-symbolic");
+
+                if let Some(idx) = app_state.queue.current_index() {
+                    queue_view_for_prev
+                        .selection_model
+                        .select_item(idx as u32, true);
+                }
             }
         }
     });
 
     // Next button
     let state_for_next = state.clone();
-    let lib_view_for_next = library_view_rc.clone();
+    let controls_for_next = controls_rc.clone();
+    let queue_view_for_next = queue_view_rc.clone();
     controls_rc.btn_next.connect_clicked(move |_| {
-        let app_state = state_for_next.borrow();
-        if let Some(mut idx) = app_state.current_track_index {
-            let total = app_state.library.tracks.len();
-            if idx + 1 < total {
-                idx += 1;
-                lib_view_for_next.songs_view.selection_model.select_item(idx as u32, true);
+        let mut app_state = state_for_next.borrow_mut();
+        if let Some(track) = app_state.queue.next().cloned() {
+            let uri = glib::filename_to_uri(&track.path, None).unwrap();
+            let title = track
+                .metadata
+                .title
+                .clone()
+                .unwrap_or_else(|| "Unknown".to_string());
+            let artist = track
+                .metadata
+                .artist
+                .clone()
+                .unwrap_or_else(|| "Unknown Artist".to_string());
+
+            if let Err(e) = app_state.player.play_file(uri.as_str()) {
+                eprintln!("Failed to play: {}", e);
+            } else {
+                controls_for_next.lbl_title.set_label(&title);
+                controls_for_next.lbl_artist.set_label(&artist);
+
+                if let Some(ref path) = track.metadata.artwork_path {
+                    controls_for_next.img_artwork.set_from_file(Some(path));
+                } else {
+                    controls_for_next
+                        .img_artwork
+                        .set_icon_name(Some("audio-x-generic-symbolic"));
+                }
+
+                controls_for_next
+                    .btn_play_pause
+                    .set_icon_name("media-playback-pause-symbolic");
+
+                if let Some(idx) = app_state.queue.current_index() {
+                    queue_view_for_next
+                        .selection_model
+                        .select_item(idx as u32, true);
+                }
             }
         }
     });
@@ -127,7 +271,9 @@ pub fn build_ui(app: &adw::Application, state: Rc<RefCell<AppState>>) {
     glib::timeout_add_local(std::time::Duration::from_millis(500), move || {
         let app_state = state_for_timer.borrow();
         if app_state.player.is_playing() {
-            if let (Some(pos), Some(dur)) = (app_state.player.position(), app_state.player.duration()) {
+            if let (Some(pos), Some(dur)) =
+                (app_state.player.position(), app_state.player.duration())
+            {
                 if dur > 0 {
                     controls_for_timer.scale_progress.set_range(0.0, dur as f64);
                     controls_for_timer.scale_progress.set_value(pos as f64);
@@ -136,7 +282,9 @@ pub fn build_ui(app: &adw::Application, state: Rc<RefCell<AppState>>) {
                     let dur_sec = dur / 1_000_000_000;
                     let pos_str = format!("{}:{:02}", pos_sec / 60, pos_sec % 60);
                     let dur_str = format!("{}:{:02}", dur_sec / 60, dur_sec % 60);
-                    controls_for_timer.lbl_time.set_label(&format!("{} / {}", pos_str, dur_str));
+                    controls_for_timer
+                        .lbl_time
+                        .set_label(&format!("{} / {}", pos_str, dur_str));
                 }
             }
         } else {
@@ -148,20 +296,26 @@ pub fn build_ui(app: &adw::Application, state: Rc<RefCell<AppState>>) {
 
     // Seek interaction
     let state_for_seek = state.clone();
-    controls_rc.scale_progress.connect_value_changed(move |scale| {
-        let app_state = state_for_seek.borrow();
-        let target_ns = scale.value() as u64;
-        
-        if let Some(pos) = app_state.player.position() {
-            let diff = if target_ns > pos { target_ns - pos } else { pos - target_ns };
-            if diff > 500_000_000 { // 500ms
-                if let Err(e) = app_state.player.seek(target_ns) {
-                    eprintln!("Seek error: {}", e);
+    controls_rc
+        .scale_progress
+        .connect_value_changed(move |scale| {
+            let app_state = state_for_seek.borrow();
+            let target_ns = scale.value() as u64;
+
+            if let Some(pos) = app_state.player.position() {
+                let diff = if target_ns > pos {
+                    target_ns - pos
+                } else {
+                    pos - target_ns
+                };
+                if diff > 500_000_000 {
+                    // 500ms
+                    if let Err(e) = app_state.player.seek(target_ns) {
+                        eprintln!("Seek error: {}", e);
+                    }
                 }
             }
-        }
-    });
-
+        });
 
     // Setup scan button
     let window_clone = window.clone();
@@ -218,7 +372,11 @@ pub fn build_ui(app: &adw::Application, state: Rc<RefCell<AppState>>) {
                         let result_clone = result_lib.clone();
 
                         std::thread::spawn(move || {
-                            let lib = crate::library::Library::scan_directory(path, |_| {});
+                            let cache_dir = gtk4::glib::user_cache_dir()
+                                .join("audmedia_linux")
+                                .join("artwork");
+                            let lib =
+                                crate::library::Library::scan_directory(path, cache_dir, |_| {});
                             *result_clone.lock().unwrap() = Some(lib);
                         });
 
@@ -256,17 +414,19 @@ pub fn build_ui(app: &adw::Application, state: Rc<RefCell<AppState>>) {
                                                 );
 
                                             if albums.insert(album.clone()) {
-                                                lib_rc
-                                                    .albums_view
-                                                    .store
-                                                    .append(&ItemObject::new(&album, &artist));
+                                                lib_rc.albums_view.store.append(&ItemObject::new(
+                                                    &album,
+                                                    &artist,
+                                                    track.metadata.artwork_path.clone(),
+                                                ));
                                             }
 
                                             if artists.insert(artist.clone()) {
-                                                lib_rc
-                                                    .artists_view
-                                                    .store
-                                                    .append(&ItemObject::new(&artist, ""));
+                                                lib_rc.artists_view.store.append(&ItemObject::new(
+                                                    &artist,
+                                                    "",
+                                                    track.metadata.artwork_path.clone(),
+                                                ));
                                             }
                                         }
 
