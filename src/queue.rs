@@ -52,6 +52,7 @@ impl Queue {
     }
 
     /// Returns whether shuffle is enabled.
+    #[allow(dead_code)]
     pub fn shuffle(&self) -> bool {
         self.shuffle
     }
@@ -103,11 +104,13 @@ impl Queue {
     }
 
     /// Returns the tracks currently in the queue, in their original order.
+    #[allow(dead_code)]
     pub fn tracks(&self) -> &[Track] {
         &self.tracks
     }
 
     /// Removes a track at the given original index.
+    #[allow(dead_code)]
     pub fn remove_track(&mut self, index: usize) {
         if index >= self.tracks.len() {
             return;
@@ -214,6 +217,7 @@ impl Queue {
     }
 
     /// Returns whether the queue is empty.
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.tracks.is_empty()
     }

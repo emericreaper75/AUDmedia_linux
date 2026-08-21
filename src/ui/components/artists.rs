@@ -1,6 +1,6 @@
 use crate::ui::models::ItemObject;
 use gtk4::prelude::*;
-use gtk4::{gio, glib, Box as GtkBox, Image, Label, ListView, Orientation, SingleSelection};
+use gtk4::{gio, Box as GtkBox, Image, Label, ListView, Orientation, SingleSelection};
 
 pub struct ArtistsView {
     pub container: gtk4::ScrolledWindow,

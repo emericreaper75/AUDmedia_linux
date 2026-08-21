@@ -5,7 +5,6 @@ use std::cell::RefCell;
 
 mod imp {
     use super::*;
-    use glib::subclass::prelude::*;
 
     #[derive(Default)]
     pub struct TrackObject {
@@ -40,7 +39,6 @@ impl TrackObject {
 
 mod item_imp {
     use super::*;
-    use glib::subclass::prelude::*;
 
     #[derive(Default)]
     pub struct ItemObject {

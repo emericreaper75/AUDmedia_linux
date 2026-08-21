@@ -1,4 +1,3 @@
-use adw::prelude::*;
 use adw::StatusPage;
 use gtk4::prelude::*;
 use gtk4::{Box as GtkBox, Button, Orientation};

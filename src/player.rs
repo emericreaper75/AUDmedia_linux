@@ -6,11 +6,14 @@ use gstreamer::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+/// Type alias for the end-of-stream callback stored in the player.
+type EosCallback = Rc<RefCell<Option<Box<dyn FnMut()>>>>;
+
 /// Audio player managing playback state and GStreamer pipeline.
 #[derive(Clone)]
 pub struct Player {
     pipeline: gst::Element,
-    on_eos: Rc<RefCell<Option<Box<dyn FnMut()>>>>,
+    on_eos: EosCallback,
 }
 
 impl std::fmt::Debug for Player {
@@ -79,6 +82,7 @@ impl Player {
     }
 
     /// Stops playback.
+    #[allow(dead_code)]
     pub fn stop(&self) {
         let _ = self.pipeline.set_state(gst::State::Null);
     }
@@ -132,20 +136,15 @@ impl Player {
 mod tests {
     use super::*;
 
+    /// Single test for the GStreamer player to avoid the GLib main-context conflict
+    /// that occurs when multiple tests each call gst::init() in separate threads.
     #[test]
-    fn test_player_creation() {
+    fn test_player() {
         gst::init().unwrap();
-        let player = Player::new();
-        assert!(player.is_ok());
-    }
-
-    #[test]
-    fn test_player_state() {
-        gst::init().unwrap();
-        let player = Player::new().unwrap();
+        let player = Player::new().expect("Player::new() should succeed");
         assert!(!player.is_playing());
 
-        // Cannot play without valid URI but we can test stop/pause methods don't panic
+        // pause/stop on an idle pipeline must not panic
         player.pause();
         assert!(!player.is_playing());
 

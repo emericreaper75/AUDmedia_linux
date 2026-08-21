@@ -1,9 +1,6 @@
 use crate::ui::models::TrackObject;
 use gtk4::prelude::*;
-use gtk4::{
-    gio, glib, Box as GtkBox, BuilderListItemFactory, Image, Label, ListView, Orientation,
-    SingleSelection,
-};
+use gtk4::{gio, Box as GtkBox, Image, Label, ListView, Orientation, SingleSelection};
 
 pub struct SongsView {
     pub container: gtk4::ScrolledWindow,

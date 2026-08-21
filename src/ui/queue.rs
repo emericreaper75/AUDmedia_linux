@@ -8,6 +8,7 @@ pub struct QueueView {
     pub container: gtk4::ScrolledWindow,
     pub store: gio::ListStore,
     pub selection_model: SingleSelection,
+    #[allow(dead_code)]
     pub list_view: ListView,
 }
 

@@ -1,13 +1,13 @@
 //! AUDmedia Linux Music Player entry point.
 
 mod app;
+pub mod config;
 mod library;
 mod metadata;
+pub mod mpris;
 mod player;
 mod queue;
 mod ui;
-pub mod config;
-pub mod mpris;
 
 use libadwaita as adw;
 use libadwaita::glib;

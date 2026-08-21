@@ -11,8 +11,11 @@ pub struct FullPlayer {
     pub btn_play_pause: Button,
     pub btn_prev: Button,
     pub btn_next: Button,
+    #[allow(dead_code)]
     pub btn_shuffle: Button,
+    #[allow(dead_code)]
     pub btn_repeat: Button,
+    #[allow(dead_code)]
     pub btn_queue: Button,
     pub btn_close: Button,
 }
@@ -91,14 +94,14 @@ impl FullPlayer {
         let time_box = GtkBox::builder()
             .orientation(Orientation::Horizontal)
             .build();
-            
+
         let lbl_time = Label::builder()
             .label("0:00 / 0:00")
             .css_classes(["dim-label", "numeric"])
             .halign(Align::Center)
             .hexpand(true)
             .build();
-            
+
         time_box.append(&lbl_time);
 
         progress_box.append(&scale_progress);

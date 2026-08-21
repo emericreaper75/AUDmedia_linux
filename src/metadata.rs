@@ -53,9 +53,15 @@ pub fn extract_metadata(
     }
 
     let mut search_parts = Vec::new();
-    if let Some(ref t) = meta.title { search_parts.push(t.to_lowercase()); }
-    if let Some(ref a) = meta.artist { search_parts.push(a.to_lowercase()); }
-    if let Some(ref a) = meta.album { search_parts.push(a.to_lowercase()); }
+    if let Some(ref t) = meta.title {
+        search_parts.push(t.to_lowercase());
+    }
+    if let Some(ref a) = meta.artist {
+        search_parts.push(a.to_lowercase());
+    }
+    if let Some(ref a) = meta.album {
+        search_parts.push(a.to_lowercase());
+    }
     meta.search_index = search_parts.join(" ");
 
     Ok(meta)

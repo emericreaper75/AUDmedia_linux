@@ -170,11 +170,11 @@ pub fn create_metadata(track: &crate::library::Track) -> Metadata {
     if let Some(title) = &track.metadata.title {
         builder = builder.title(title);
     }
-    
+
     if let Some(artist) = &track.metadata.artist {
         builder = builder.artist(vec![artist.as_str()]);
     }
-    
+
     if let Some(album) = &track.metadata.album {
         builder = builder.album(album);
     }

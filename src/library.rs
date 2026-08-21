@@ -1,9 +1,9 @@
 //! Music library management and file scanning.
 
 use crate::metadata::{extract_metadata, TrackMetadata};
-use std::path::{Path, PathBuf};
 use jwalk::WalkDir;
 use rayon::prelude::*;
+use std::path::{Path, PathBuf};
 
 /// A single track in the library.
 #[derive(Debug, Clone)]
@@ -51,7 +51,7 @@ impl Library {
             .collect();
 
         let paths_len = paths.len();
-        
+
         // 2. Parallelize metadata extraction on a background thread pool, sending results via a channel
         let (tx, rx) = std::sync::mpsc::channel();
 
@@ -61,7 +61,10 @@ impl Library {
                     Ok(metadata) => Track { path, metadata },
                     Err(e) => {
                         eprintln!("Failed to read metadata for {:?}: {}", path, e);
-                        Track { path, metadata: TrackMetadata::default() }
+                        Track {
+                            path,
+                            metadata: TrackMetadata::default(),
+                        }
                     }
                 };
                 let _ = tx.send(track);
@@ -79,13 +82,18 @@ impl Library {
 
         progress_callback(tracks.len());
         let duration = start_time.elapsed();
-        println!("Library scan completed in {:.2?} ({} tracks)", duration, tracks.len());
-        
+        println!(
+            "Library scan completed in {:.2?} ({} tracks)",
+            duration,
+            tracks.len()
+        );
+
         Self { tracks }
     }
 
     /// Searches the library for tracks matching the query in title, artist, or album.
     /// Matching is case-insensitive. Returns an empty vector if the query is empty or whitespace.
+    #[allow(dead_code)]
     pub fn search(&self, query: &str) -> Vec<&Track> {
         let query_trim = query.trim();
         if query_trim.is_empty() {
@@ -107,10 +115,16 @@ mod tests {
 
     fn create_track(title: Option<&str>, artist: Option<&str>, album: Option<&str>) -> Track {
         let mut search_parts = Vec::new();
-        if let Some(t) = title { search_parts.push(t.to_lowercase()); }
-        if let Some(a) = artist { search_parts.push(a.to_lowercase()); }
-        if let Some(a) = album { search_parts.push(a.to_lowercase()); }
-        
+        if let Some(t) = title {
+            search_parts.push(t.to_lowercase());
+        }
+        if let Some(a) = artist {
+            search_parts.push(a.to_lowercase());
+        }
+        if let Some(a) = album {
+            search_parts.push(a.to_lowercase());
+        }
+
         Track {
             path: PathBuf::from("/fake/path"),
             metadata: TrackMetadata {

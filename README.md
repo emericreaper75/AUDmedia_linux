@@ -36,14 +36,12 @@ The first target platform is Debian Linux.
 * Repeat
 * Recently played
 * Playback state persistence
+* MPRIS integration
+* Keyboard and media-key controls
 * Clean, mobile-style interface
 
 ### Planned
 
-* Keyboard controls
-* Media-key support
-* MPRIS integration
-* Drag and drop
 * Background library scanning
 * Improved artwork caching
 * Debian packaging
@@ -206,8 +204,8 @@ You need:
 * Rust toolchain
 * GTK4 development libraries
 * libadwaita development libraries
-* GStreamer
-* Required GStreamer plugins
+* GStreamer and required plugins
+* D-Bus (for MPRIS)
 
 The first supported distribution is Debian.
 
@@ -218,13 +216,33 @@ Other distributions are planned after the initial Debian workflow becomes stable
 Clone the repository:
 
 ```bash
-git clone <repository-url>
-cd <repository-directory>
+git clone https://github.com/emericreaper75/AUDmedia_linux.git
+cd AUDmedia_linux
 ```
 
-Install the required system dependencies for Debian.
+Install system dependencies (Debian / Ubuntu):
 
-Then verify Rust:
+```bash
+sudo apt install \
+  libgtk-4-dev \
+  libadwaita-1-dev \
+  libgstreamer1.0-dev \
+  libgstreamer-plugins-base1.0-dev \
+  gstreamer1.0-plugins-good \
+  gstreamer1.0-plugins-bad \
+  gstreamer1.0-plugins-ugly \
+  gstreamer1.0-libav \
+  libdbus-1-dev \
+  pkg-config
+```
+
+Install the Rust toolchain (if not already installed):
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+Verify Rust:
 
 ```bash
 rustc --version
@@ -283,14 +301,11 @@ cargo build --release
 
 ## Project structure
 
-```text id="n1jv9p"
-linux-music-player/
+```text
+AUDmedia_linux/
 ├── .github/
 │   └── workflows/
 │       └── ci.yml
-├── assets/
-│   ├── icons/
-│   └── screenshots/
 ├── src/
 │   ├── main.rs
 │   ├── app.rs
@@ -298,12 +313,25 @@ linux-music-player/
 │   ├── library.rs
 │   ├── metadata.rs
 │   ├── queue.rs
+│   ├── config.rs
+│   ├── mpris.rs
 │   └── ui/
-├── tests/
+│       ├── mod.rs
+│       ├── window.rs
+│       ├── home.rs
+│       ├── library.rs
+│       ├── models.rs
+│       ├── queue.rs
+│       └── components/
+│           ├── songs.rs
+│           ├── albums.rs
+│           ├── artists.rs
+│           ├── full_player.rs
+│           └── mini_player.rs
 ├── AGENTS.md
 ├── PRD.md
-├── design.md
-├── architecture.md
+├── DESIGN.md
+├── ARCHITECTURE.md
 ├── README.md
 ├── CONTRIBUTING.md
 ├── CHANGELOG.md
@@ -312,7 +340,6 @@ linux-music-player/
 ├── LICENSE
 └── .gitignore
 ```
-
 
 ## Testing
 
@@ -433,10 +460,10 @@ See `CONTRIBUTING.md` for the complete contribution workflow.
 
 ### Phase 4: Linux integration
 
-```text id="q4w7vp"
-[ ] Keyboard controls
-[ ] Media keys
-[ ] MPRIS
+```text
+[x] Keyboard controls
+[x] Media keys
+[x] MPRIS
 [ ] Background scanning
 ```
 
@@ -470,15 +497,7 @@ This section should be updated as development progresses.
 
 ## License
 
-The project will use an open-source license.
-
-The final license should be added before the first public release.
-
-Recommended choice:
-
-MIT License
-
-If the project uses dependencies with additional license requirements, review their licenses before release.
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
 
 ## Project documentation
 

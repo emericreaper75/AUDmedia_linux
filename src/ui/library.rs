@@ -1,6 +1,5 @@
 use crate::ui::components::{albums::AlbumsView, artists::ArtistsView, songs::SongsView};
-use adw::prelude::*;
-use adw::{ViewStack, ViewStackPage, ViewSwitcher};
+use adw::{ViewStack, ViewSwitcher};
 use gtk4::prelude::*;
 use gtk4::{Box as GtkBox, Orientation};
 use libadwaita as adw;

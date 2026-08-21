@@ -51,7 +51,10 @@ impl AppConfig {
                     eprintln!("Warning: Corrupted config at {:?}, using defaults.", path);
                 }
             } else {
-                eprintln!("Warning: Failed to read config at {:?}, using defaults.", path);
+                eprintln!(
+                    "Warning: Failed to read config at {:?}, using defaults.",
+                    path
+                );
             }
         }
         Self::default()
