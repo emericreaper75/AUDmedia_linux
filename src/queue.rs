@@ -5,8 +5,10 @@ use rand::thread_rng;
 
 use crate::library::Track;
 
+use serde::{Deserialize, Serialize};
+
 /// Repeat mode for playback.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum RepeatMode {
     #[default]
     Off,

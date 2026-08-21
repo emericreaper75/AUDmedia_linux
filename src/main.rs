@@ -6,6 +6,8 @@ mod metadata;
 mod player;
 mod queue;
 mod ui;
+pub mod config;
+pub mod mpris;
 
 use libadwaita as adw;
 use libadwaita::glib;

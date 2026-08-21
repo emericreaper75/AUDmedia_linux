@@ -2,7 +2,8 @@
 
 use crate::metadata::{extract_metadata, TrackMetadata};
 use std::path::{Path, PathBuf};
-use walkdir::WalkDir;
+use jwalk::WalkDir;
+use rayon::prelude::*;
 
 /// A single track in the library.
 #[derive(Debug, Clone)]
@@ -30,41 +31,56 @@ impl Library {
         cache_dir: C,
         mut progress_callback: F,
     ) -> Self {
-        let mut tracks = Vec::new();
+        let start_time = std::time::Instant::now();
         let supported_extensions = ["mp3", "flac", "ogg", "m4a", "wav"];
-        let cache_path = cache_dir.as_ref();
+        let cache_path_buf = cache_dir.as_ref().to_path_buf();
 
-        for entry in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
-            if entry.file_type().is_file() {
-                let path = entry.path();
-                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                    if supported_extensions.contains(&ext.to_lowercase().as_str()) {
-                        match extract_metadata(path, cache_path) {
-                            Ok(metadata) => {
-                                tracks.push(Track {
-                                    path: path.to_path_buf(),
-                                    metadata,
-                                });
-                            }
-                            Err(e) => {
-                                eprintln!("Failed to read metadata for {:?}: {}", path, e);
-                                // Add with default metadata so it can still be played
-                                tracks.push(Track {
-                                    path: path.to_path_buf(),
-                                    metadata: TrackMetadata::default(),
-                                });
-                            }
-                        }
-
-                        if tracks.len() % 10 == 0 {
-                            progress_callback(tracks.len());
-                        }
-                    }
+        // 1. Collect all valid audio file paths sequentially
+        let paths: Vec<PathBuf> = WalkDir::new(path)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file())
+            .map(|e| e.path())
+            .filter(|p| {
+                if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
+                    supported_extensions.contains(&ext.to_lowercase().as_str())
+                } else {
+                    false
                 }
+            })
+            .collect();
+
+        let paths_len = paths.len();
+        
+        // 2. Parallelize metadata extraction on a background thread pool, sending results via a channel
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        std::thread::spawn(move || {
+            paths.into_par_iter().for_each_with(tx, |tx, path| {
+                let track = match extract_metadata(&path, &cache_path_buf) {
+                    Ok(metadata) => Track { path, metadata },
+                    Err(e) => {
+                        eprintln!("Failed to read metadata for {:?}: {}", path, e);
+                        Track { path, metadata: TrackMetadata::default() }
+                    }
+                };
+                let _ = tx.send(track);
+            });
+        });
+
+        // 3. Receive tracks on this thread (so we don't have to require Sync/Send on progress_callback)
+        let mut tracks = Vec::with_capacity(paths_len);
+        for track in rx {
+            tracks.push(track);
+            if tracks.len() % 10 == 0 {
+                progress_callback(tracks.len());
             }
         }
 
         progress_callback(tracks.len());
+        let duration = start_time.elapsed();
+        println!("Library scan completed in {:.2?} ({} tracks)", duration, tracks.len());
+        
         Self { tracks }
     }
 
@@ -80,25 +96,7 @@ impl Library {
 
         self.tracks
             .iter()
-            .filter(|track| {
-                let matches_title = track
-                    .metadata
-                    .title
-                    .as_deref()
-                    .map_or(false, |t| t.to_lowercase().contains(&query_lower));
-                let matches_artist = track
-                    .metadata
-                    .artist
-                    .as_deref()
-                    .map_or(false, |a| a.to_lowercase().contains(&query_lower));
-                let matches_album = track
-                    .metadata
-                    .album
-                    .as_deref()
-                    .map_or(false, |a| a.to_lowercase().contains(&query_lower));
-
-                matches_title || matches_artist || matches_album
-            })
+            .filter(|track| track.metadata.search_index.contains(&query_lower))
             .collect()
     }
 }
@@ -108,12 +106,18 @@ mod tests {
     use super::*;
 
     fn create_track(title: Option<&str>, artist: Option<&str>, album: Option<&str>) -> Track {
+        let mut search_parts = Vec::new();
+        if let Some(t) = title { search_parts.push(t.to_lowercase()); }
+        if let Some(a) = artist { search_parts.push(a.to_lowercase()); }
+        if let Some(a) = album { search_parts.push(a.to_lowercase()); }
+        
         Track {
             path: PathBuf::from("/fake/path"),
             metadata: TrackMetadata {
                 title: title.map(String::from),
                 artist: artist.map(String::from),
                 album: album.map(String::from),
+                search_index: search_parts.join(" "),
                 ..Default::default()
             },
         }

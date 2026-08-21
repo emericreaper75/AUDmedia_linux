@@ -83,6 +83,16 @@ impl Player {
         let _ = self.pipeline.set_state(gst::State::Null);
     }
 
+    /// Sets the volume (0.0 to 1.0).
+    pub fn set_volume(&self, volume: f64) {
+        self.pipeline.set_property("volume", volume);
+    }
+
+    /// Gets the current volume.
+    pub fn volume(&self) -> f64 {
+        self.pipeline.property("volume")
+    }
+
     /// Returns whether the player is currently playing.
     pub fn is_playing(&self) -> bool {
         let (result, state, _pending) = self.pipeline.state(gst::ClockTime::ZERO);

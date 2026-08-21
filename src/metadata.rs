@@ -21,6 +21,7 @@ pub struct TrackMetadata {
     pub year: Option<u32>,
     pub duration: Option<Duration>,
     pub artwork_path: Option<String>,
+    pub search_index: String,
 }
 
 pub fn extract_metadata(
@@ -50,6 +51,12 @@ pub fn extract_metadata(
     } else {
         meta.artwork_path = extract_and_cache_artwork(None, path, cache_dir);
     }
+
+    let mut search_parts = Vec::new();
+    if let Some(ref t) = meta.title { search_parts.push(t.to_lowercase()); }
+    if let Some(ref a) = meta.artist { search_parts.push(a.to_lowercase()); }
+    if let Some(ref a) = meta.album { search_parts.push(a.to_lowercase()); }
+    meta.search_index = search_parts.join(" ");
 
     Ok(meta)
 }
@@ -85,7 +92,7 @@ fn extract_and_cache_artwork(
     if let Some(t) = tag {
         if let Some(pic) = t.pictures().first() {
             if let Ok(img) = image::load_from_memory(pic.data()) {
-                let resized = img.resize_to_fill(256, 256, FilterType::Lanczos3);
+                let resized = img.resize_to_fill(256, 256, FilterType::Triangle);
                 if resized.save(&cached_file_path).is_ok() {
                     return Some(cached_file_path.to_string_lossy().into_owned());
                 }
@@ -99,7 +106,7 @@ fn extract_and_cache_artwork(
         let local_path = path.parent()?.join(name);
         if local_path.exists() {
             if let Ok(img) = image::open(&local_path) {
-                let resized = img.resize_to_fill(256, 256, FilterType::Lanczos3);
+                let resized = img.resize_to_fill(256, 256, FilterType::Triangle);
                 if resized.save(&cached_file_path).is_ok() {
                     return Some(cached_file_path.to_string_lossy().into_owned());
                 }
