@@ -52,6 +52,10 @@ pub fn extract_metadata(
         meta.artwork_path = extract_and_cache_artwork(None, path, cache_dir);
     }
 
+    if meta.title.is_none() {
+        meta.title = path.file_stem().map(|s| s.to_string_lossy().to_string());
+    }
+
     let mut search_parts = Vec::new();
     if let Some(ref t) = meta.title {
         search_parts.push(t.to_lowercase());

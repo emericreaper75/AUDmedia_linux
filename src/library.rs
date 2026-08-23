@@ -57,17 +57,17 @@ impl Library {
 
         std::thread::spawn(move || {
             paths.into_par_iter().for_each_with(tx, |tx, path| {
-                let track = match extract_metadata(&path, &cache_path_buf) {
-                    Ok(metadata) => Track { path, metadata },
-                    Err(e) => {
-                        eprintln!("Failed to read metadata for {:?}: {}", path, e);
-                        Track {
-                            path,
-                            metadata: TrackMetadata::default(),
-                        }
+                match extract_metadata(&path, &cache_path_buf) {
+                    Ok(metadata) => {
+                        let _ = tx.send(Track { path, metadata });
                     }
-                };
-                let _ = tx.send(track);
+                    Err(e) => {
+                        eprintln!(
+                            "Skipping invalid or unreadable audio file {:?}: {}",
+                            path, e
+                        );
+                    }
+                }
             });
         });
 
@@ -175,9 +175,15 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].metadata.title.as_deref().unwrap(), "Radio Ga Ga");
 
-        // Case differences
+        // Case differences & multiple matching tracks
         let results = library.search("qUeEn");
         assert_eq!(results.len(), 2);
+        let titles: Vec<&str> = results
+            .iter()
+            .map(|t| t.metadata.title.as_deref().unwrap())
+            .collect();
+        assert!(titles.contains(&"Bohemian Rhapsody"));
+        assert!(titles.contains(&"Radio Ga Ga"));
 
         // Artist search
         let results = library.search("Eagles");
@@ -204,5 +210,70 @@ mod tests {
         // No results
         let results = library.search("Beatles");
         assert_eq!(results.len(), 0);
+    }
+
+    fn create_minimal_wav(path: &Path) {
+        let mut data = Vec::new();
+        data.extend_from_slice(b"RIFF");
+        data.extend_from_slice(&(36u32 + 100u32).to_le_bytes());
+        data.extend_from_slice(b"WAVE");
+        data.extend_from_slice(b"fmt ");
+        data.extend_from_slice(&16u32.to_le_bytes());
+        data.extend_from_slice(&1u16.to_le_bytes());
+        data.extend_from_slice(&1u16.to_le_bytes());
+        data.extend_from_slice(&8000u32.to_le_bytes());
+        data.extend_from_slice(&16000u32.to_le_bytes());
+        data.extend_from_slice(&2u16.to_le_bytes());
+        data.extend_from_slice(&16u16.to_le_bytes());
+        data.extend_from_slice(b"data");
+        data.extend_from_slice(&100u32.to_le_bytes());
+        data.extend(vec![0u8; 100]);
+
+        std::fs::write(path, data).expect("Failed to write test WAV file");
+    }
+
+    #[test]
+    fn test_scan_directory_validation() {
+        let temp_dir = std::env::temp_dir().join(format!("audmedia_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let cache_dir = temp_dir.join("cache");
+        std::fs::create_dir_all(&cache_dir).unwrap();
+
+        // 1. Valid audio file
+        let valid_wav = temp_dir.join("valid_track.wav");
+        create_minimal_wav(&valid_wav);
+
+        // 2. Empty mp3
+        let empty_mp3 = temp_dir.join("empty.mp3");
+        std::fs::write(&empty_mp3, b"").unwrap();
+
+        // 3. Text file renamed to mp3
+        let fake_mp3 = temp_dir.join("fake.mp3");
+        std::fs::write(&fake_mp3, b"This is text content, not an mp3 audio stream.").unwrap();
+
+        // 4. Corrupt audio file
+        let corrupt_mp3 = temp_dir.join("corrupt.mp3");
+        std::fs::write(&corrupt_mp3, &[0xFF, 0xFB, 0x00, 0x00, 0x12, 0x34]).unwrap();
+
+        // 5. Unsupported extension
+        let doc_txt = temp_dir.join("document.txt");
+        std::fs::write(&doc_txt, b"Plain text file").unwrap();
+
+        // Perform scan
+        let library = Library::scan_directory(&temp_dir, &cache_dir, |_| {});
+
+        // Only valid_wav should be present
+        assert_eq!(library.tracks.len(), 1);
+        assert_eq!(library.tracks[0].path, valid_wav);
+        // Missing metadata title should fallback to file stem ("valid_track")
+        assert_eq!(
+            library.tracks[0].metadata.title.as_deref(),
+            Some("valid_track")
+        );
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

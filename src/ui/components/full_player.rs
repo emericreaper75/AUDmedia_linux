@@ -11,11 +11,8 @@ pub struct FullPlayer {
     pub btn_play_pause: Button,
     pub btn_prev: Button,
     pub btn_next: Button,
-    #[allow(dead_code)]
     pub btn_shuffle: Button,
-    #[allow(dead_code)]
     pub btn_repeat: Button,
-    #[allow(dead_code)]
     pub btn_queue: Button,
     pub btn_close: Button,
 }

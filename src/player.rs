@@ -71,6 +71,18 @@ impl Player {
         Ok(())
     }
 
+    /// Prepares a file from the given URI in Paused state (does not start playback automatically).
+    pub fn prepare_file(&self, uri: &str) -> Result<(), glib::Error> {
+        self.pipeline
+            .set_state(gst::State::Null)
+            .map_err(|e| glib::Error::new(glib::FileError::Failed, &e.to_string()))?;
+        self.pipeline.set_property("uri", uri);
+        self.pipeline
+            .set_state(gst::State::Paused)
+            .map_err(|e| glib::Error::new(glib::FileError::Failed, &e.to_string()))?;
+        Ok(())
+    }
+
     /// Pauses playback.
     pub fn pause(&self) {
         let _ = self.pipeline.set_state(gst::State::Paused);

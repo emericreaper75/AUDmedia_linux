@@ -5,6 +5,7 @@ use crate::ui::home::HomeView;
 use crate::ui::library::LibraryView;
 use crate::ui::models::TrackObject;
 use crate::ui::queue::QueueView;
+use crate::ui::search::SearchView;
 use adw::{HeaderBar, ViewStack, ViewSwitcherBar};
 use gtk4::glib;
 use gtk4::prelude::*;
@@ -24,6 +25,7 @@ pub fn build_ui(app: &adw::Application, state: Rc<RefCell<AppState>>) {
     let stack = ViewStack::new();
     let home_view_rc = Rc::new(HomeView::new());
     let library_view_rc = Rc::new(LibraryView::new());
+    let search_view_rc = Rc::new(SearchView::new());
     let queue_view_rc = Rc::new(QueueView::new());
 
     let home_page = stack.add_titled(&home_view_rc.container, Some("home"), "Home");
@@ -32,8 +34,8 @@ pub fn build_ui(app: &adw::Application, state: Rc<RefCell<AppState>>) {
     let library_page = stack.add_titled(&library_view_rc.container, Some("library"), "Library");
     library_page.set_icon_name(Some("folder-music-symbolic"));
 
-    let queue_page = stack.add_titled(&queue_view_rc.container, Some("queue"), "Queue");
-    queue_page.set_icon_name(Some("view-list-symbolic"));
+    let search_page = stack.add_titled(&search_view_rc.container, Some("search"), "Search");
+    search_page.set_icon_name(Some("system-search-symbolic"));
 
     toolbar_view.append(&stack);
 
@@ -44,6 +46,15 @@ pub fn build_ui(app: &adw::Application, state: Rc<RefCell<AppState>>) {
 
     let mini_player = Rc::new(MiniPlayer::new());
     let full_player = Rc::new(FullPlayer::new());
+
+    let queue_popover = gtk4::Popover::builder()
+        .child(&queue_view_rc.container)
+        .build();
+    queue_popover.set_parent(&full_player.btn_queue);
+
+    full_player.btn_queue.connect_clicked(move |_| {
+        queue_popover.popup();
+    });
 
     toolbar_view.append(&mini_player.container);
     toolbar_view.append(&switcher_bar);
@@ -93,12 +104,20 @@ pub fn build_ui(app: &adw::Application, state: Rc<RefCell<AppState>>) {
         app_state.config.window_height = win.height();
         app_state.config.window_maximized = win.is_maximized();
 
-        if let Some(track) = app_state.queue.current() {
-            app_state.config.last_played_track = Some(track.path.to_string_lossy().to_string());
-        }
-        app_state.config.last_playback_position = app_state.player.position();
+        let AppState {
+            ref library,
+            ref queue,
+            ref mut config,
+            ref player,
+            ..
+        } = *app_state;
 
-        app_state.config.save();
+        if let Some(track) = queue.current(library) {
+            config.last_played_track = Some(track.path.to_string_lossy().to_string());
+        }
+        config.last_playback_position = player.position();
+
+        config.save();
         glib::Propagation::Proceed
     });
 
@@ -194,6 +213,76 @@ pub fn build_ui(app: &adw::Application, state: Rc<RefCell<AppState>>) {
         }
     };
 
+    // Helper to reflect shuffle/repeat state in the secondary controls.
+    // Reads state and updates button icons/CSS – never borrows state mutably.
+    let update_secondary_btns = {
+        let full = full_player.clone();
+        let state_ref = state.clone();
+        move || {
+            let (shuffle_on, repeat_mode) = {
+                let app_state = state_ref.borrow();
+                (app_state.queue.shuffle(), app_state.queue.repeat_mode())
+            };
+
+            // Shuffle: add "accent" CSS class when active
+            if shuffle_on {
+                full.btn_shuffle.add_css_class("accent");
+            } else {
+                full.btn_shuffle.remove_css_class("accent");
+            }
+
+            // Repeat: cycle icon to reflect current mode
+            match repeat_mode {
+                crate::queue::RepeatMode::Off => {
+                    full.btn_repeat
+                        .set_icon_name("media-playlist-repeat-symbolic");
+                    full.btn_repeat.remove_css_class("accent");
+                }
+                crate::queue::RepeatMode::Queue => {
+                    full.btn_repeat
+                        .set_icon_name("media-playlist-repeat-symbolic");
+                    full.btn_repeat.add_css_class("accent");
+                }
+                crate::queue::RepeatMode::One => {
+                    full.btn_repeat
+                        .set_icon_name("media-playlist-repeat-song-symbolic");
+                    full.btn_repeat.add_css_class("accent");
+                }
+            }
+        }
+    };
+
+    // Shuffle button
+    let state_for_shuffle = state.clone();
+    let update_secondary_shuffle = update_secondary_btns.clone();
+    full_player.btn_shuffle.connect_clicked(move |_| {
+        {
+            let mut app_state = state_for_shuffle.borrow_mut();
+            let new_shuffle = !app_state.queue.shuffle();
+            app_state.queue.set_shuffle(new_shuffle);
+        }
+        update_secondary_shuffle();
+    });
+
+    // Repeat button – cycles Off → Queue → One → Off
+    let state_for_repeat = state.clone();
+    let update_secondary_repeat = update_secondary_btns.clone();
+    full_player.btn_repeat.connect_clicked(move |_| {
+        {
+            let mut app_state = state_for_repeat.borrow_mut();
+            let next_mode = match app_state.queue.repeat_mode() {
+                crate::queue::RepeatMode::Off => crate::queue::RepeatMode::Queue,
+                crate::queue::RepeatMode::Queue => crate::queue::RepeatMode::One,
+                crate::queue::RepeatMode::One => crate::queue::RepeatMode::Off,
+            };
+            app_state.queue.set_repeat_mode(next_mode);
+        }
+        update_secondary_repeat();
+    });
+
+    // Initialize secondary button appearance from saved config state
+    update_secondary_btns();
+
     // Auto-continue logic (EOS)
     let state_for_eos = state.clone();
     let queue_view_for_eos = queue_view_rc.clone();
@@ -201,22 +290,34 @@ pub fn build_ui(app: &adw::Application, state: Rc<RefCell<AppState>>) {
     let update_play_btn_eos = update_play_btn.clone();
 
     state.borrow().player.set_eos_callback(move || {
-        let mut app_state = state_for_eos.borrow_mut();
-        if let Some(track) = app_state.queue.next().cloned() {
-            let uri = match glib::filename_to_uri(&track.path, None) {
-                Ok(u) => u,
-                Err(e) => {
-                    eprintln!("Invalid path for EOS track: {e}");
-                    return;
-                }
-            };
+        let (track_opt, uri_res) = {
+            let mut app_state = state_for_eos.borrow_mut();
+            let AppState {
+                ref library,
+                ref mut queue,
+                ref player,
+                ..
+            } = *app_state;
 
-            if let Err(e) = app_state.player.play_file(uri.as_str()) {
-                eprintln!("Auto-continue failed: {}", e);
+            if let Some(track) = queue.next(library).cloned() {
+                let uri = glib::filename_to_uri(&track.path, None);
+                if let Ok(ref u) = uri {
+                    let play_res = player.play_file(u.as_str());
+                    let curr_idx = queue.current_index();
+                    (Some((track, curr_idx)), Some(play_res))
+                } else {
+                    (None, None)
+                }
             } else {
+                (None, None)
+            }
+        };
+
+        if let Some((track, curr_idx)) = track_opt {
+            if let Some(Ok(())) = uri_res {
                 update_players_eos(&track);
 
-                if let Some(idx) = app_state.queue.current_index() {
+                if let Some(idx) = curr_idx {
                     queue_view_for_eos
                         .selection_model
                         .select_item(idx as u32, true);
@@ -229,7 +330,7 @@ pub fn build_ui(app: &adw::Application, state: Rc<RefCell<AppState>>) {
 
     // Selection changed -> Play song
     let state_for_selection = state.clone();
-    let queue_view_for_selection = queue_view_rc.clone();
+    let _queue_view_for_selection = queue_view_rc.clone();
     let update_players_sel = update_players.clone();
     let update_play_btn_sel = update_play_btn.clone();
 
@@ -240,32 +341,34 @@ pub fn build_ui(app: &adw::Application, state: Rc<RefCell<AppState>>) {
             if let Some(item) = model.selected_item() {
                 if let Ok(track_obj) = item.downcast::<TrackObject>() {
                     let track = track_obj.get_track();
-                    let mut app_state = state_for_selection.borrow_mut();
 
-                    app_state.queue.clear();
-                    queue_view_for_selection.store.remove_all();
+                    let play_result = {
+                        let mut app_state = state_for_selection.borrow_mut();
+                        let AppState {
+                            ref library,
+                            ref mut queue,
+                            ref player,
+                            ..
+                        } = *app_state;
 
-                    app_state.queue.add_track(track.clone());
-                    queue_view_for_selection
-                        .store
-                        .append(&TrackObject::new(track.clone()));
-                    queue_view_for_selection
-                        .selection_model
-                        .select_item(0, true);
+                        queue.play_library_track(library, &track);
 
-                    let uri = match glib::filename_to_uri(&track.path, None) {
-                        Ok(u) => u,
-                        Err(e) => {
-                            eprintln!("Invalid path for selected track: {e}");
-                            return;
+                        match glib::filename_to_uri(&track.path, None) {
+                            Ok(uri) => Some((player.play_file(uri.as_str()), track.clone())),
+                            Err(e) => {
+                                eprintln!("Invalid path for selected track: {e}");
+                                None
+                            }
                         }
                     };
 
-                    if let Err(e) = app_state.player.play_file(uri.as_str()) {
-                        eprintln!("Failed to play: {}", e);
-                    } else {
-                        update_players_sel(&track);
-                        update_play_btn_sel("media-playback-pause-symbolic");
+                    if let Some((res, track)) = play_result {
+                        if let Err(e) = res {
+                            eprintln!("Failed to play: {}", e);
+                        } else {
+                            update_players_sel(&track);
+                            update_play_btn_sel("media-playback-pause-symbolic");
+                        }
                     }
                 }
             }
@@ -275,15 +378,23 @@ pub fn build_ui(app: &adw::Application, state: Rc<RefCell<AppState>>) {
     let state_for_play = state.clone();
     let update_play_btn_pp = update_play_btn.clone();
     let toggle_play = move || {
-        let app_state = state_for_play.borrow();
-        if app_state.player.is_playing() {
-            app_state.player.pause();
+        let (is_playing, has_current) = {
+            let app_state = state_for_play.borrow();
+            let AppState {
+                ref library,
+                ref queue,
+                ref player,
+                ..
+            } = *app_state;
+            (player.is_playing(), queue.current(library).is_some())
+        };
+
+        if is_playing {
+            state_for_play.borrow().player.pause();
             update_play_btn_pp("media-playback-start-symbolic");
-        } else {
-            if app_state.queue.current().is_some() {
-                app_state.player.resume();
-                update_play_btn_pp("media-playback-pause-symbolic");
-            }
+        } else if has_current {
+            state_for_play.borrow().player.resume();
+            update_play_btn_pp("media-playback-pause-symbolic");
         }
     };
 
@@ -298,28 +409,38 @@ pub fn build_ui(app: &adw::Application, state: Rc<RefCell<AppState>>) {
 
     let action_prev = {
         let state_rc = state.clone();
-        let queue_view = queue_view_rc.clone();
         let update_p = update_players.clone();
         let update_btn = update_play_btn.clone();
         move || {
-            let mut app_state = state_rc.borrow_mut();
-            if let Some(track) = app_state.queue.previous().cloned() {
-                let uri = match glib::filename_to_uri(&track.path, None) {
-                    Ok(u) => u,
-                    Err(e) => {
-                        eprintln!("Invalid path for prev track: {e}");
-                        return;
+            let (track_and_idx, play_res) = {
+                let mut app_state = state_rc.borrow_mut();
+                let AppState {
+                    ref library,
+                    ref mut queue,
+                    ref player,
+                    ..
+                } = *app_state;
+
+                if let Some(track) = queue.previous(library).cloned() {
+                    let uri_res = glib::filename_to_uri(&track.path, None);
+                    if let Ok(uri) = uri_res {
+                        let res = player.play_file(uri.as_str());
+                        let idx = queue.current_index();
+                        (Some((track, idx)), Some(res))
+                    } else {
+                        (None, None)
                     }
-                };
-                if let Err(e) = app_state.player.play_file(uri.as_str()) {
+                } else {
+                    (None, None)
+                }
+            };
+
+            if let (Some((track, _idx)), Some(res)) = (track_and_idx, play_res) {
+                if let Err(e) = res {
                     eprintln!("Failed to play: {e}");
                 } else {
                     update_p(&track);
                     update_btn("media-playback-pause-symbolic");
-
-                    if let Some(idx) = app_state.queue.current_index() {
-                        queue_view.selection_model.select_item(idx as u32, true);
-                    }
                 }
             }
         }
@@ -333,28 +454,38 @@ pub fn build_ui(app: &adw::Application, state: Rc<RefCell<AppState>>) {
 
     let action_next = {
         let state_rc = state.clone();
-        let queue_view = queue_view_rc.clone();
         let update_p = update_players.clone();
         let update_btn = update_play_btn.clone();
         move || {
-            let mut app_state = state_rc.borrow_mut();
-            if let Some(track) = app_state.queue.next().cloned() {
-                let uri = match glib::filename_to_uri(&track.path, None) {
-                    Ok(u) => u,
-                    Err(e) => {
-                        eprintln!("Invalid path for next track: {e}");
-                        return;
+            let (track_and_idx, play_res) = {
+                let mut app_state = state_rc.borrow_mut();
+                let AppState {
+                    ref library,
+                    ref mut queue,
+                    ref player,
+                    ..
+                } = *app_state;
+
+                if let Some(track) = queue.next(library).cloned() {
+                    let uri_res = glib::filename_to_uri(&track.path, None);
+                    if let Ok(uri) = uri_res {
+                        let res = player.play_file(uri.as_str());
+                        let idx = queue.current_index();
+                        (Some((track, idx)), Some(res))
+                    } else {
+                        (None, None)
                     }
-                };
-                if let Err(e) = app_state.player.play_file(uri.as_str()) {
+                } else {
+                    (None, None)
+                }
+            };
+
+            if let (Some((track, _idx)), Some(res)) = (track_and_idx, play_res) {
+                if let Err(e) = res {
                     eprintln!("Failed to play: {e}");
                 } else {
                     update_p(&track);
                     update_btn("media-playback-pause-symbolic");
-
-                    if let Some(idx) = app_state.queue.current_index() {
-                        queue_view.selection_model.select_item(idx as u32, true);
-                    }
                 }
             }
         }
@@ -371,11 +502,17 @@ pub fn build_ui(app: &adw::Application, state: Rc<RefCell<AppState>>) {
     let full_player_timer = full_player.clone();
 
     glib::timeout_add_local(std::time::Duration::from_millis(500), move || {
-        let app_state = state_for_timer.borrow();
-        if app_state.player.is_playing() {
-            if let (Some(pos), Some(dur)) =
-                (app_state.player.position(), app_state.player.duration())
-            {
+        let (is_playing, pos, dur) = {
+            let app_state = state_for_timer.borrow();
+            (
+                app_state.player.is_playing(),
+                app_state.player.position(),
+                app_state.player.duration(),
+            )
+        };
+
+        if is_playing {
+            if let (Some(pos), Some(dur)) = (pos, dur) {
                 if dur > 0 {
                     full_player_timer.scale_progress.set_range(0.0, dur as f64);
                     full_player_timer.scale_progress.set_value(pos as f64);
@@ -398,136 +535,210 @@ pub fn build_ui(app: &adw::Application, state: Rc<RefCell<AppState>>) {
     full_player
         .scale_progress
         .connect_value_changed(move |scale| {
-            let app_state = state_for_seek.borrow();
+            let pos = state_for_seek.borrow().player.position();
             let target_ns = scale.value() as u64;
 
-            if let Some(pos) = app_state.player.position() {
+            if let Some(pos) = pos {
                 if target_ns.abs_diff(pos) > 500_000_000 {
-                    if let Err(e) = app_state.player.seek(target_ns) {
+                    if let Err(e) = state_for_seek.borrow().player.seek(target_ns) {
                         eprintln!("Seek error: {}", e);
                     }
                 }
             }
         });
 
-    // Refactored folder scanning function
-    let scan_folder = move |path: PathBuf,
-                            home: Rc<HomeView>,
-                            state_rc: Rc<RefCell<AppState>>,
-                            lib_rc: Rc<LibraryView>| {
-        let status = home
-            .container
-            .first_child()
-            .unwrap()
-            .downcast::<gtk4::Box>()
-            .unwrap()
-            .first_child()
-            .unwrap()
-            .downcast::<adw::StatusPage>()
-            .unwrap();
-        status.set_title("Scanning...");
-        status.set_description(Some("Please wait while we index your music."));
-        home.btn_scan.set_sensitive(false);
+    // Refactored folder scanning function with non-overlapping scan guard
+    let is_scanning = Rc::new(std::cell::Cell::new(false));
 
-        let result_lib = std::sync::Arc::new(std::sync::Mutex::new(None));
-        let result_clone = result_lib.clone();
+    let scan_folder = {
+        let is_scanning_scan = is_scanning.clone();
+        let queue_view_scan = queue_view_rc.clone();
+        let update_players_scan = update_players.clone();
+        let update_play_btn_scan = update_play_btn.clone();
+        move |path: PathBuf,
+              home: Rc<HomeView>,
+              state_rc: Rc<RefCell<AppState>>,
+              lib_rc: Rc<LibraryView>| {
+            if is_scanning_scan.get() {
+                return;
+            }
 
-        std::thread::spawn(move || {
-            let cache_dir = gtk4::glib::user_cache_dir()
-                .join("audmedia_linux")
-                .join("artwork");
-            let lib = crate::library::Library::scan_directory(path, cache_dir, |_| {});
-            *result_clone.lock().unwrap() = Some(lib);
-        });
+            if !path.exists() || !path.is_dir() {
+                let err_msg = format!(
+                    "Folder '{}' does not exist or is inaccessible.",
+                    path.display()
+                );
+                home.set_state(crate::ui::home::HomeState::ScanFailed(err_msg));
+                state_rc.borrow_mut().library = crate::library::Library::new();
+                lib_rc.songs_view.store.remove_all();
+                lib_rc.albums_view.store.remove_all();
+                lib_rc.artists_view.store.remove_all();
+                return;
+            }
 
-        gtk4::glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
-            if let Ok(mut lock) = result_lib.try_lock() {
-                if let Some(lib) = lock.take() {
-                    state_rc.borrow_mut().library = lib;
+            is_scanning_scan.set(true);
+            home.set_state(crate::ui::home::HomeState::Scanning);
 
-                    let library = &state_rc.borrow().library;
-                    lib_rc.songs_view.store.remove_all();
-                    lib_rc.albums_view.store.remove_all();
-                    lib_rc.artists_view.store.remove_all();
+            let result_lib = std::sync::Arc::new(std::sync::Mutex::new(None));
+            let result_clone = result_lib.clone();
 
-                    let mut albums = HashSet::new();
-                    let mut artists = HashSet::new();
+            std::thread::spawn(move || {
+                let cache_dir = gtk4::glib::user_cache_dir()
+                    .join("audmedia_linux")
+                    .join("artwork");
+                let lib = crate::library::Library::scan_directory(path, cache_dir, |_| {});
+                *result_clone.lock().unwrap() = Some(lib);
+            });
 
-                    let mut song_objs = Vec::new();
-                    let mut album_objs = Vec::new();
-                    let mut artist_objs = Vec::new();
+            let is_scanning_timer = is_scanning_scan.clone();
+            let queue_view_timer = queue_view_scan.clone();
+            let update_players_timer = update_players_scan.clone();
+            let update_play_btn_timer = update_play_btn_scan.clone();
 
-                    for track in &library.tracks {
-                        song_objs.push(
-                            crate::ui::models::TrackObject::new(track.clone())
-                                .upcast::<gtk4::glib::Object>(),
+            gtk4::glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+                if let Ok(mut lock) = result_lib.try_lock() {
+                    if let Some(lib) = lock.take() {
+                        lib_rc.songs_view.store.remove_all();
+                        lib_rc.albums_view.store.remove_all();
+                        lib_rc.artists_view.store.remove_all();
+
+                        let mut albums = HashSet::new();
+                        let mut artists = HashSet::new();
+
+                        let mut song_objs = Vec::new();
+                        let mut album_objs = Vec::new();
+                        let mut artist_objs = Vec::new();
+
+                        for track in &lib.tracks {
+                            song_objs.push(
+                                crate::ui::models::TrackObject::new(track.clone())
+                                    .upcast::<gtk4::glib::Object>(),
+                            );
+
+                            let album = track
+                                .metadata
+                                .album
+                                .clone()
+                                .unwrap_or_else(|| "Unknown Album".to_string());
+                            let artist = track
+                                .metadata
+                                .artist
+                                .clone()
+                                .unwrap_or_else(|| "Unknown Artist".to_string());
+
+                            if albums.insert(album.clone()) {
+                                album_objs.push(
+                                    crate::ui::models::ItemObject::new(
+                                        &album,
+                                        &artist,
+                                        track.metadata.artwork_path.clone(),
+                                    )
+                                    .upcast::<gtk4::glib::Object>(),
+                                );
+                            }
+
+                            if artists.insert(artist.clone()) {
+                                artist_objs.push(
+                                    crate::ui::models::ItemObject::new(
+                                        &artist,
+                                        "",
+                                        track.metadata.artwork_path.clone(),
+                                    )
+                                    .upcast::<gtk4::glib::Object>(),
+                                );
+                            }
+                        }
+
+                        lib_rc.songs_view.store.splice(
+                            lib_rc.songs_view.store.n_items(),
+                            0,
+                            &song_objs,
+                        );
+                        lib_rc.albums_view.store.splice(
+                            lib_rc.albums_view.store.n_items(),
+                            0,
+                            &album_objs,
+                        );
+                        lib_rc.artists_view.store.splice(
+                            lib_rc.artists_view.store.n_items(),
+                            0,
+                            &artist_objs,
                         );
 
-                        let album = track
-                            .metadata
-                            .album
-                            .clone()
-                            .unwrap_or_else(|| "Unknown Album".to_string());
-                        let artist = track
-                            .metadata
-                            .artist
-                            .clone()
-                            .unwrap_or_else(|| "Unknown Artist".to_string());
-
-                        if albums.insert(album.clone()) {
-                            album_objs.push(
-                                crate::ui::models::ItemObject::new(
-                                    &album,
-                                    &artist,
-                                    track.metadata.artwork_path.clone(),
-                                )
-                                .upcast::<gtk4::glib::Object>(),
-                            );
+                        let track_count = lib.tracks.len();
+                        {
+                            let mut app_state = state_rc.borrow_mut();
+                            app_state.queue.sync_library(&lib);
+                            app_state.library = lib;
                         }
 
-                        if artists.insert(artist.clone()) {
-                            artist_objs.push(
-                                crate::ui::models::ItemObject::new(
-                                    &artist,
-                                    "",
-                                    track.metadata.artwork_path.clone(),
+                        is_scanning_timer.set(false);
+                        if track_count == 0 {
+                            home.set_state(crate::ui::home::HomeState::EmptyFolder);
+                        } else {
+                            home.set_state(crate::ui::home::HomeState::LibraryLoaded(track_count));
+
+                            // Restore playback state if available
+                            let (restored_track, restored_pos) = {
+                                let app_state = state_rc.borrow();
+                                crate::config::validate_restored_playback_state(
+                                    &app_state.config,
+                                    &app_state.library,
                                 )
-                                .upcast::<gtk4::glib::Object>(),
-                            );
+                            }
+                            .unzip();
+
+                            if let (Some(restored_track), Some(restored_pos)) =
+                                (restored_track, restored_pos)
+                            {
+                                if let Ok(uri) = glib::filename_to_uri(&restored_track.path, None) {
+                                    let success = {
+                                        let mut app_state = state_rc.borrow_mut();
+                                        let AppState {
+                                            ref library,
+                                            ref mut queue,
+                                            ref player,
+                                            ..
+                                        } = *app_state;
+                                        queue.play_library_track(library, &restored_track);
+
+                                        let ok = player.prepare_file(uri.as_str()).is_ok();
+                                        if ok && restored_pos > 0 {
+                                            let _ = player.seek(restored_pos);
+                                        }
+                                        ok
+                                    };
+
+                                    if success {
+                                        queue_view_timer.store.remove_all();
+                                        queue_view_timer.store.append(
+                                            &crate::ui::models::TrackObject::new(
+                                                restored_track.clone(),
+                                            )
+                                            .upcast::<gtk4::glib::Object>(),
+                                        );
+                                        queue_view_timer.selection_model.select_item(0, true);
+
+                                        update_players_timer(&restored_track);
+                                        update_play_btn_timer("media-playback-start-symbolic");
+                                    }
+                                }
+                            }
                         }
+
+                        return gtk4::glib::ControlFlow::Break;
                     }
-
-                    lib_rc.songs_view.store.splice(
-                        lib_rc.songs_view.store.n_items(),
-                        0,
-                        &song_objs,
-                    );
-                    lib_rc.albums_view.store.splice(
-                        lib_rc.albums_view.store.n_items(),
-                        0,
-                        &album_objs,
-                    );
-                    lib_rc.artists_view.store.splice(
-                        lib_rc.artists_view.store.n_items(),
-                        0,
-                        &artist_objs,
-                    );
-
-                    home.set_empty(false);
-                    home.btn_scan.set_sensitive(true);
-
-                    return gtk4::glib::ControlFlow::Break;
                 }
-            }
-            gtk4::glib::ControlFlow::Continue
-        });
+                gtk4::glib::ControlFlow::Continue
+            });
+        }
     };
 
     // Auto-scan on startup if we have folders configured
     let state_for_startup = state.clone();
     let home_view_startup = home_view_rc.clone();
     let library_view_startup = library_view_rc.clone();
-    let scan_folder_clone = scan_folder;
+    let scan_folder_clone = scan_folder.clone();
     let folder_to_scan = state_for_startup
         .borrow()
         .config
@@ -541,21 +752,28 @@ pub fn build_ui(app: &adw::Application, state: Rc<RefCell<AppState>>) {
             state_for_startup,
             library_view_startup,
         );
+    } else {
+        home_view_rc.set_state(crate::ui::home::HomeState::NoFolder);
     }
 
-    // Setup scan button for manual scanning
+    // Setup scan button for manual scanning / changing folder
     let window_clone = window.clone();
     let state_clone = state.clone();
     let home_view_clone = home_view_rc.clone();
     let library_view_clone = library_view_rc.clone();
+    let scan_folder_manual = scan_folder.clone();
+    let is_scanning_scan_btn = is_scanning.clone();
 
     home_view_rc.btn_scan.connect_clicked(move |_| {
+        if is_scanning_scan_btn.get() {
+            return;
+        }
+
         let dialog = gtk4::FileDialog::new();
-        let _window_weak = window_clone.downgrade();
         let state_weak = Rc::downgrade(&state_clone);
         let home_weak = Rc::downgrade(&home_view_clone);
         let lib_weak = Rc::downgrade(&library_view_clone);
-        let scan_folder_manual = scan_folder;
+        let scan_folder_cb = scan_folder_manual.clone();
 
         dialog.select_folder(
             Some(&window_clone),
@@ -580,11 +798,183 @@ pub fn build_ui(app: &adw::Application, state: Rc<RefCell<AppState>>) {
                         };
 
                         // Update config with the selected folder
-                        state_rc.borrow_mut().config.music_folders =
-                            vec![path.to_string_lossy().to_string()];
-                        state_rc.borrow().config.save();
+                        {
+                            let mut app_state = state_rc.borrow_mut();
+                            app_state.config.music_folders =
+                                vec![path.to_string_lossy().to_string()];
+                            app_state.config.save();
+                        }
 
-                        scan_folder_manual(path, home, state_rc, lib_rc);
+                        scan_folder_cb(path, home, state_rc, lib_rc);
+                    }
+                }
+            },
+        );
+    });
+
+    // Setup rescan button for re-scanning current folder
+    let state_rescan = state.clone();
+    let home_rescan = home_view_rc.clone();
+    let lib_rescan = library_view_rc.clone();
+    let scan_folder_rescan = scan_folder.clone();
+    let is_scanning_rescan_btn = is_scanning.clone();
+
+    home_view_rc.btn_rescan.connect_clicked(move |_| {
+        if is_scanning_rescan_btn.get() {
+            return;
+        }
+
+        let folder = state_rescan.borrow().config.music_folders.first().cloned();
+
+        if let Some(path_str) = folder {
+            scan_folder_rescan(
+                PathBuf::from(path_str),
+                home_rescan.clone(),
+                state_rescan.clone(),
+                lib_rescan.clone(),
+            );
+        }
+    });
+
+    // Search entry input listener
+    let state_for_search = state.clone();
+    let search_view_for_entry = search_view_rc.clone();
+
+    search_view_rc
+        .search_entry
+        .connect_search_changed(move |entry| {
+            let query = entry.text().to_string();
+            let app_state = state_for_search.borrow();
+
+            if app_state.library.tracks.is_empty() {
+                search_view_for_entry.set_state(crate::ui::search::SearchState::EmptyLibrary);
+                search_view_for_entry.songs_view.store.remove_all();
+                return;
+            }
+
+            let trimmed = query.trim();
+            if trimmed.is_empty() {
+                search_view_for_entry.songs_view.store.remove_all();
+                search_view_for_entry.set_state(crate::ui::search::SearchState::EmptyQuery);
+            } else {
+                let matching_tracks = app_state.library.search(trimmed);
+                if matching_tracks.is_empty() {
+                    search_view_for_entry.songs_view.store.remove_all();
+                    search_view_for_entry.set_state(crate::ui::search::SearchState::NoResults);
+                } else {
+                    let objs: Vec<glib::Object> = matching_tracks
+                        .iter()
+                        .map(|t| {
+                            crate::ui::models::TrackObject::new((*t).clone())
+                                .upcast::<glib::Object>()
+                        })
+                        .collect();
+
+                    search_view_for_entry.songs_view.store.remove_all();
+                    search_view_for_entry.songs_view.store.splice(0, 0, &objs);
+                    search_view_for_entry.set_state(crate::ui::search::SearchState::Results(
+                        matching_tracks.len(),
+                    ));
+                }
+            }
+        });
+
+    // Search song selection handler
+    let state_for_search_select = state.clone();
+    let _queue_view_search = queue_view_rc.clone();
+    let update_players_search = update_players.clone();
+    let update_play_btn_search = update_play_btn.clone();
+
+    search_view_rc
+        .songs_view
+        .selection_model
+        .connect_selection_changed(move |selection_model, _position, _n_items| {
+            let selected_item = selection_model.selected_item();
+            if let Some(obj) = selected_item {
+                if let Ok(track_obj) = obj.downcast::<TrackObject>() {
+                    let track = track_obj.get_track();
+
+                    let play_result = {
+                        let mut app_state = state_for_search_select.borrow_mut();
+                        let AppState {
+                            ref library,
+                            ref mut queue,
+                            ref player,
+                            ..
+                        } = *app_state;
+
+                        queue.play_library_track(library, &track);
+
+                        match glib::filename_to_uri(&track.path, None) {
+                            Ok(uri) => Some((player.play_file(uri.as_str()), track.clone())),
+                            Err(e) => {
+                                eprintln!("Invalid path for selected track: {e}");
+                                None
+                            }
+                        }
+                    };
+
+                    if let Some((res, track)) = play_result {
+                        if let Err(e) = res {
+                            eprintln!("Failed to play selected track: {}", e);
+                        } else {
+                            update_players_search(&track);
+                            update_play_btn_search("media-playback-pause-symbolic");
+                        }
+                    }
+                }
+            }
+        });
+
+    // Search view btn_scan (Add Music Folder on empty library)
+    let window_search_scan = window.clone();
+    let state_search_scan = state.clone();
+    let home_search_scan = home_view_rc.clone();
+    let library_search_scan = library_view_rc.clone();
+    let scan_folder_search = scan_folder;
+    let is_scanning_search_scan = is_scanning;
+
+    search_view_rc.btn_scan.connect_clicked(move |_| {
+        if is_scanning_search_scan.get() {
+            return;
+        }
+
+        let dialog = gtk4::FileDialog::new();
+        let state_weak = Rc::downgrade(&state_search_scan);
+        let home_weak = Rc::downgrade(&home_search_scan);
+        let lib_weak = Rc::downgrade(&library_search_scan);
+        let scan_folder_cb = scan_folder_search.clone();
+
+        dialog.select_folder(
+            Some(&window_search_scan),
+            gtk4::gio::Cancellable::NONE,
+            move |result| {
+                if let Ok(folder) = result {
+                    if let Some(path) = folder.path() {
+                        let home = if let Some(h) = home_weak.upgrade() {
+                            h
+                        } else {
+                            return;
+                        };
+                        let state_rc = if let Some(s) = state_weak.upgrade() {
+                            s
+                        } else {
+                            return;
+                        };
+                        let lib_rc = if let Some(l) = lib_weak.upgrade() {
+                            l
+                        } else {
+                            return;
+                        };
+
+                        {
+                            let mut app_state = state_rc.borrow_mut();
+                            app_state.config.music_folders =
+                                vec![path.to_string_lossy().to_string()];
+                            app_state.config.save();
+                        }
+
+                        scan_folder_cb(path, home, state_rc, lib_rc);
                     }
                 }
             },
@@ -632,15 +1022,19 @@ pub fn build_ui(app: &adw::Application, state: Rc<RefCell<AppState>>) {
                 glib::Propagation::Stop
             }
             "Up" => {
-                let app_state = state_for_key.borrow();
-                let new_vol = (app_state.player.volume() + 0.05).min(1.0);
-                app_state.player.set_volume(new_vol);
+                let new_vol = {
+                    let app_state = state_for_key.borrow();
+                    (app_state.player.volume() + 0.05).min(1.0)
+                };
+                state_for_key.borrow().player.set_volume(new_vol);
                 glib::Propagation::Stop
             }
             "Down" => {
-                let app_state = state_for_key.borrow();
-                let new_vol = (app_state.player.volume() - 0.05).max(0.0);
-                app_state.player.set_volume(new_vol);
+                let new_vol = {
+                    let app_state = state_for_key.borrow();
+                    (app_state.player.volume() - 0.05).max(0.0)
+                };
+                state_for_key.borrow().player.set_volume(new_vol);
                 glib::Propagation::Stop
             }
             "Escape" => {
